@@ -1,0 +1,402 @@
+openapi: 3.0.3
+info:
+  title: Remo Room API
+  version: 1.0.0
+
+servers:
+  - url: https://api.remoroom.kantacky.com
+    description: 本番環境
+  - url: https://stg.api.remoroom.kantacky.com
+    description: ステージング環境
+  - url: https://dev.api.remoroom.kantacky.com
+    description: 開発環境
+  - url: http://localhost:8080
+    description: ローカル環境
+
+components:
+  securitySchemes:
+    FirebaseAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      required:
+        - uid
+        - displayName
+        - rooms
+      properties:
+        uid:
+          type: string
+          description: ユーザーのUID
+        displayName:
+          type: string
+          description: ユーザーの表示名
+        currentRoom:
+          $ref: "#/components/schemas/Room"
+          nullable: true
+          description: 現在入室中の部屋（入室していない場合はnull）
+        rooms:
+          type: array
+          description: 所属している部屋の一覧
+          items:
+            $ref: "#/components/schemas/Room"
+
+    Room:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - owner
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 部屋のUUID
+        name:
+          type: string
+          description: 部屋名
+        description:
+          type: string
+          description: 部屋の説明
+        owner:
+          type: string
+          description: 部屋を作成したユーザーのUID
+
+    RoomCreateRequest:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+          description: 作成する部屋名
+        description:
+          type: string
+          description: 作成する部屋の説明
+
+    RoomUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: 新しい部屋名
+        description:
+          type: string
+          description: 新しい部屋の説明
+
+    AddMemberRequest:
+      type: object
+      properties:
+        uid:
+          type: string
+          description: 追加するユーザーのUID
+      required:
+        - uid
+
+    EnterRoomRequest:
+      type: object
+      properties:
+        room_id:
+          type: string
+          format: uuid
+          description: 入室する部屋のUUID
+      required:
+        - room_id
+
+security:
+  - FirebaseAuth: []
+
+paths:
+  /me:
+    get:
+      summary: 自分のユーザー情報を取得
+      operationId: getCurrentUser
+      tags:
+        - Users
+      security:
+        - FirebaseAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: 未認証
+    post:
+      summary: 自分のユーザー情報を初回登録する
+      operationId: registerCurrentUser
+      tags:
+        - Users
+      security:
+        - FirebaseAuth: []
+      responses:
+        "200":
+          description: 登録成功
+        "400":
+          description: 登録済み
+        "401":
+          description: 未認証
+
+  /rooms:
+    get:
+      summary: 所属可能な部屋一覧を取得
+      operationId: listRooms
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      responses:
+        "200":
+          description: 部屋一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Room"
+        "401":
+          description: 未認証
+
+    post:
+      summary: 新しい部屋を作成（管理者のみ）
+      operationId: createRoom
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomCreateRequest"
+      responses:
+        "201":
+          description: 追加成功
+        "400":
+          description: 無効な入力
+        "403":
+          description: 管理者権限が必要
+        "401":
+          description: 未認証
+
+  /rooms/{id}:
+    patch:
+      summary: 部屋の名前や説明を更新する（オーナーのみ）
+      operationId: updateRoom
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+        "400":
+          description: 無効な入力
+        "403":
+          description: オーナーのみがこの操作を実行できます
+        "404":
+          description: 部屋が存在しない
+        "401":
+          description: 未認証
+    delete:
+      summary: 指定された部屋を削除（管理者のみ）
+      operationId: deleteRoom
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: 削除成功
+        "404":
+          description: 部屋が存在しない
+        "403":
+          description: 管理者権限が必要
+        "401":
+          description: 未認証
+
+  /rooms/{id}/members:
+    get:
+      summary: 部屋に所属するメンバー一覧を取得（所属者または管理者のみ）
+      operationId: getRoomMembers
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: メンバー一覧取得成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "403":
+          description: アクセス禁止
+        "401":
+          description: 未認証
+
+    post:
+      summary: オーナーが部屋にユーザーを追加する
+      operationId: addRoomMember
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMemberRequest"
+      responses:
+        "200":
+          description: 追加成功
+        "400":
+          description: 無効な入力
+        "403":
+          description: オーナーのみがこの操作を実行できます
+        "401":
+          description: 未認証
+
+  /rooms/{id}/members/{uid}:
+    delete:
+      summary: 指定したユーザーを部屋から削除（管理者のみ）
+      operationId: removeRoomMember
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: uid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 削除成功
+        "404":
+          description: ユーザーまたは部屋が存在しない
+        "403":
+          description: 管理者権限が必要
+        "401":
+          description: 未認証
+
+  /rooms/{id}/status:
+    get:
+      summary: 指定された部屋の在室者一覧を取得（部屋の所属者のみ）
+      operationId: getRoomStatus
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 在室者一覧取得成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "403":
+          description: アクセス禁止
+        "401":
+          description: 未認証
+
+  /rooms/enter:
+    post:
+      summary: 指定された部屋に入室する（他の部屋にいた場合は自動で退室）
+      operationId: enterRoom
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnterRoomRequest"
+      responses:
+        "200":
+          description: 入室成功
+        "400":
+          description: 無効な入力、または既に入室しています
+        "403":
+          description: アクセス禁止
+        "401":
+          description: 未認証
+
+  /rooms/exit:
+    post:
+      summary: 現在の部屋から退室する
+      operationId: exitRoom
+      tags:
+        - Rooms
+      security:
+        - FirebaseAuth: []
+      responses:
+        "200":
+          description: 退室成功
+        "400":
+          description: 現在どの部屋にも入室していません
+        "401":
+          description: 未認証
